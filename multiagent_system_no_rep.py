@@ -9,6 +9,7 @@ import time
 from datasets import load_dataset
 import openai
 import pandas as pd
+import csv
 
 from reputation_model.model_suitability import ModelSuitability
 
@@ -47,24 +48,47 @@ class System:
             pd.DataFrame(columns=columns).to_csv(self.results_file, index=False)
 
     def save_results(self, question, correct_answer, initial_answers, final_answers):
-        # Load existing results
-        results_df = pd.read_csv(self.results_file)
+        """
+        Saves the results of the question and answers to a CSV file.
 
-        # Prepare a new row for the current question
-        row = {}
-        for agent_name, initial_answer in initial_answers.items():
-            row[f"{agent_name}_initial_response"] = initial_answer
+        Ensures that data with newline characters (\n) is handled correctly.
 
-        for agent_name, final_answer in final_answers.items():
-            row[f"{agent_name}_conversational_response"] = final_answer
+        Args:
+            question (str): The question being asked.
+            correct_answer (str): The correct answer to the question.
+            initial_answers (dict): Initial responses from agents.
+            final_answers (dict): Final responses from agents after conversation.
+        """
+        try:
+            # Load existing results, if the file exists
+            try:
+                results_df = pd.read_csv(self.results_file)
+            except FileNotFoundError:
+                # If file does not exist, create an empty DataFrame
+                results_df = pd.DataFrame()
 
-        # Add metadata columns
-        row["question"] = question.replace("\n", " ")
-        row["correct_answer"] = correct_answer
+            # Prepare a new row for the current question
+            row = {}
+            for agent_name, initial_answer in initial_answers.items():
+                row[f"{agent_name}_initial_response"] = initial_answer
 
-        # Append the new row to the DataFrame and save it
-        results_df = pd.concat([results_df, pd.DataFrame([row])], ignore_index=True)
-        results_df.to_csv(self.results_file, index=False)
+            for agent_name, final_answer in final_answers.items():
+                row[f"{agent_name}_conversational_response"] = final_answer
+
+            # Add metadata columns
+            row["question"] = question.replace("\n", " ")
+            row["correct_answer"] = correct_answer
+
+            # Append the new row to the DataFrame
+            results_df = pd.concat([results_df, pd.DataFrame([row])], ignore_index=True)
+
+            # Save the DataFrame to the CSV file with quoting to handle special characters
+            results_df.to_csv(self.results_file, index=False, lineterminator='\n')
+            
+
+        except Exception as e:
+            print(f"Error saving results: {e}")
+
 
     def initialize_group_chat(self, use_reputation=False, reputation_method="cosine"):
         agent_model_types = [
@@ -137,7 +161,7 @@ class System:
         self.reputation_method = reputation_method
 
         self.results_folder = "results"
-        self.results_file = os.path.join(self.results_folder, "evaluation_results_with_rep.csv")
+        self.results_file = os.path.join(self.results_folder, "evaluation_results_no_rep.csv")
         self.initialize_results_csv()
 
     def process_question(self, question, correct_answer):
@@ -169,7 +193,7 @@ class System:
             # facilitator_prompt =
             pass
         else:
-            facilitator_prompt = f"{question} \n Agents' Past Performance on Simliar Problems (between 0 and 1): {agent_reputations}. Begin discussion:"
+            facilitator_prompt = f"{question} \n Begin discussion:"
 
         self.chat_manager.run_chat(
             messages=[
