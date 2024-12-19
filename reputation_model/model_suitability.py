@@ -39,8 +39,9 @@ class ModelSuitability:
         similarities = self.compute_similarities(new_question_embedding)
 
         if len(similarities) == 0:
-            return 0.0  # No data to base suitability on
-
+            return {
+                name: 0.0 for name in self.agent_names
+            }  # No data to base suitability on, 1 is the default
 
         agent_suitabilities = {}
         for agent_name in self.agent_names:
@@ -53,7 +54,7 @@ class ModelSuitability:
             #       {weighted_total=}, {weighted_successes.sum()/weighted_total=}")
 
             if weighted_total == 0:
-                agent_suitabilities[agent_name] = 0 # Avoid division by zero
+                agent_suitabilities[agent_name] = 0  # Avoid division by zero
 
             suitability = weighted_successes.sum() / weighted_total
 
@@ -61,5 +62,5 @@ class ModelSuitability:
             suitability = max(0.0, min(1.0, suitability))
 
             agent_suitabilities[agent_name] = suitability
-        
+
         return agent_suitabilities
