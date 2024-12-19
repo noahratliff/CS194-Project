@@ -9,6 +9,14 @@ import time
 from datasets import load_dataset
 import openai
 import pandas as pd
+from torch.utils.data import Dataset, DataLoader
+import torch
+from tqdm import tqdm
+import matplotlib.pyplot as plt
+from datetime import datetime
+
+
+
 
 from reputation_model.model_suitability import ModelSuitability
 
@@ -23,6 +31,16 @@ def update_reputation(question, agent_correctness):
 
 def get_reputation_context(agent_name, reputation_scores):
     pass
+
+class DictDataset(Dataset):
+    def __init__(self, data):
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx]
 
 
 class System:
@@ -319,6 +337,64 @@ class System:
         print(f"\n Total Accuracy: {accuracy:.2f}%")
         return accuracy
 
+
+    def full_eval_mmlu_mixed(self, subjects=["college_medicine", "international_law"], batch_size = 16, max_iters = None):
+        num_correct = 0
+        total = 0
+
+        # Load the MMLU dataset
+        dataset_list = []
+        for subject in subjects:
+            dataset = load_dataset("cais/mmlu", subject, split="test")
+            print(f"initial {type(dataset)=}")
+            dataset_list += list(dataset)
+        
+        dataset = DictDataset(dataset_list)
+        def collate_fn(batch): return batch
+        print(f"{type(dataset_list)=}, {type(dataset_list[0])=} {len(dataset_list)=}")
+        
+        # concat_datasets = torch.utils.data.ConcatDataset(dataset_list)        
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+
+        accuracies = []
+        for batch_i, batch in enumerate(tqdm(dataloader, desc="Evaluating")):
+            if max_iters is not None and batch_i >= max_iters:
+                break
+            
+            print(f"{type(batch)=}, {len(batch)=}")
+            for idx, qa in enumerate(batch):
+                print(f"{qa=}")
+                question = f"""Question: {qa['question']}\nOptions:\n0: {qa['choices'][0]}\n1: {qa['choices'][1]}\n2: {qa['choices'][2]}\n3: {qa['choices'][3]}\n"""  # Answer with the number corresponding to the correct choice (0, 1, 2, or 3). Do not answer in the form a sentence; answer only with a single number as your output."""
+
+                print(f"Processing question {idx+1}/{len(batch)}...")
+                # print(question)
+
+                is_correct = self.process_question(question, qa["answer"])
+
+                if is_correct:
+                    num_correct += 1
+                total += 1
+
+            # Calculate accuracy
+            accuracy = (num_correct / total) * 100
+            print(f"Batch {batch_i}, Accuracy: {accuracy:.2f}%")
+            accuracies.append(accuracy)
+        
+        plt.figure(figsize=(8, 5))
+        plt.plot(accuracies, marker='o')
+        plt.xlabel('Batch number')
+        plt.ylabel('Accuracy (%)')
+        plt.title('Evaluation Accuracy, Subjects = {subjects}')
+        plt.grid(True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"accuracy_plot_{timestamp}.png"
+        plt.savefig(filename, dpi=300, bbox_inches="tight")
+
+        plt.show()
+
+        return accuracies
+
     # def evaluate_system(self):
 
     #     if is_correct:
@@ -421,7 +497,8 @@ if __name__ == "__main__":
     system = System()
     system.initialize_group_chat()
     # system.evaluate_gpt4_on_mmlu(sample_size=5)
-    system.evaluate_gpt4_on_mmlu_mixed(sample_size=4)
+    # system.evaluate_gpt4_on_mmlu_mixed(sample_size=4)
+    system.full_eval_mmlu_mixed(batch_size = 2, max_iters = 2)
 
     # TODO: try using these as agents, since they have different expertise levels now
     # agents = [
