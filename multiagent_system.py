@@ -33,7 +33,7 @@ class System():
             ConversableAgent(
                 name=f"Facilitator",
                 llm_config=llm_config,
-                system_message="""You are a facilitator. However, do not provide any input, answer, or analysis to the given question. Your only job is to ask for the final answer when the agents are done discussing. DO NOT provide your own answers to the questions. Let them discuss for two rounds and then simply ask "What is your final answer? Give just the answer please (an integer and nothing else)." when the other agents' conversation is over. After the first round, encourage them to check their answers and/or keep discussing, but still DO NOT provide any explanation or help with the answer.""",
+                system_message="""You are a facilitator. However, do not provide any input, answer, or analysis to the given question. Your only job is to ask for the final answer when the agents are done discussing. DO NOT provide your own answers to the questions. Let them discuss for two rounds and then simply ask "Can each agent provide their final answer? Give just the answer please (an integer and nothing else)." when the other agents' conversation is over. After the first round, encourage them to check their answers and/or keep discussing, but still DO NOT provide any explanation or help with the answer.""",
                 silent=False,
             )
         ]
@@ -45,7 +45,7 @@ class System():
                                 You are a collaborative agent. After each given question, you will engage in multi-agent discussion.
                                 During the conversation portion, explain your reasoning and answer. You will be given information about how other agents previously performed on similar questions, 
                                 which you should use to decide how much to trust them.
-                                When you are asked for your final answer, you will vote for your final answer and give your answer as only the number with no explanation.
+                                When you are asked for your final answer, you will vote for your final answer and give your answer as only the number with no explanation. Your answer should only be one of the following numbers: 0, 1, 2, or 3. Do not send any other text or any other explanation.
                                 It does not have to be the same answer as the other agents.
                                 """,
                 llm_config={
@@ -78,8 +78,10 @@ class System():
         initial_responses = {}
         print(f"{question=}")
         print(f"{correct_answer=}")
+
+        # Initial Question
         for agent in self.non_facilitator_agents:
-            initial_prompt = f"Question: {question}. What is your initial answer? Give just the answer please (an integer and nothing else)."
+            initial_prompt = f"Question: {question}. Can each agent provide an initial answer to the question? Your output should only be a single integer: 0, 1, 2, or 3. Do not provide your answer in the form of a sentence, just as a single number. For example, if you believe the correct answer is choice 2, just respond with '2' and nothing else."
             initial_answer = agent.generate_reply(messages=[{"content": initial_prompt, "role": "user"}])
             initial_responses[agent.name] = initial_answer
             
@@ -91,8 +93,10 @@ class System():
         #     agent_reputations = "N/A"
         # print(f"Agents' Initial Answer Correctness on Similar Questions: {agent_reputations}")
 
+
+        # Facilitator posts the agents' reputation for context.
         self.chat_manager.run_chat(
-            messages=[{"role": "user", "content": f"{question}\n Initial Answers: {initial_responses}\n Agents' Past Performance on Simliar Problems: {agent_reputations}. Begin discussion:"}],
+            messages=[{"role": "user", "content": f"Question: {question} \n Agents' Past Performance on Simliar Problems: {agent_reputations}. Begin discussion:"}], # {question}\n Initial Answers: {initial_responses}
             config=self.group_chat,
             sender=self.group_chat.agents[0],
         )
@@ -102,7 +106,6 @@ class System():
             name = message["name"]
             final_answers[name] = message["content"].strip().lower()
             print(f"{name}'s final answer: {final_answers[name]}")
-        
         
         # TODO: have players vote now, conditioned on the chat dialogue
         print(f'{final_answers=}')
@@ -141,7 +144,7 @@ class System():
 
         correct_count = 0
         for idx, question in enumerate(sampled_questions):
-            prompt = f"""Question: {question['question']}\nOptions:\n0: {question['choices'][0]}\n1: {question['choices'][1]}\n2: {question['choices'][2]}\n3: {question['choices'][3]}\nAnswer with the number corresponding to the correct choice (0, 1, 2, or 3)."""
+            prompt = f"""Question: {question['question']}\nOptions:\n0: {question['choices'][0]}\n1: {question['choices'][1]}\n2: {question['choices'][2]}\n3: {question['choices'][3]}\nAnswer with the number corresponding to the correct choice (0, 1, 2, or 3). Do not answer in the form a sentence; answer only with a single number as your output."""
             
             print(f"Processing question {idx+1}/{sample_size}...")
             # print(question)
@@ -188,7 +191,7 @@ class System():
         correct_count = 0
         for idx, question in enumerate(sampled_questions):
             print(f"{question=}")
-            prompt = f"""Question: {question['question']}\nOptions:\n0: {question['choices'][0]}\n1: {question['choices'][1]}\n2: {question['choices'][2]}\n3: {question['choices'][3]}\nAnswer with the number corresponding to the correct choice (0, 1, 2, or 3)."""
+            prompt = f"""Question: {question['question']}\nOptions:\n0: {question['choices'][0]}\n1: {question['choices'][1]}\n2: {question['choices'][2]}\n3: {question['choices'][3]}\n""" # Answer with the number corresponding to the correct choice (0, 1, 2, or 3). Do not answer in the form a sentence; answer only with a single number as your output."""
             
             print(f"Processing question {idx+1}/{sample_size}...")
             # print(question)
@@ -321,7 +324,7 @@ if __name__ == "__main__":
     system = System()
     system.initialize_group_chat()
     # system.evaluate_gpt4_on_mmlu(sample_size=5)
-    system.evaluate_gpt4_on_mmlu_mixed(sample_size=6)
+    system.evaluate_gpt4_on_mmlu_mixed(sample_size=3)
 
     # TODO: try using these as agents, since they have different expertise levels now
     # agents = [
