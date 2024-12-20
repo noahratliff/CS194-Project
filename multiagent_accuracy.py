@@ -19,7 +19,7 @@ import re
 
 
 
-from reputation_model.model_suitability import ModelSuitability
+from reputation_model.model_suitability import NaiveModelSuitability
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 openai.api_key = os.getenv("OPENAI_ORG_ID")
@@ -169,15 +169,15 @@ class System:
 
         self.non_facilitator_agents = self.agents[1:]
         self.non_facilitator_agent_names = [agent.name for agent in self.agents[1:]]
-        self.model_suitability = ModelSuitability(
+        self.model_suitability = NaiveModelSuitability(
             agent_names=self.non_facilitator_agent_names
         )
 
         assert reputation_method in ["cosine", "accuracy", "baseline"]
         self.reputation_method = reputation_method
 
-        self.results_folder = "statistics/normal_centroid"
-        self.results_file = os.path.join(self.results_folder, "evaluation_results.csv")
+        self.results_folder = "statistics/normal_accuracy"
+        self.results_file = os.path.join(self.results_folder, "evaluation_results_with_rep.csv")
         self.initialize_results_csv()
 
     def process_question(self, question, correct_answer, num_files):
@@ -454,8 +454,8 @@ class System:
                 running_accuracy = (all_num_correct / all_total) * 100
                 running_accuracies.append(running_accuracy)
                 
-                num_traj_files = len([f for f in os.listdir("trajectories/normal_centroid_trajectories/")])
-                traj_filename = f"trajectories/normal_centroid_trajectories/traj{num_traj_files}"
+                num_traj_files = len([f for f in os.listdir("trajectories/normal_accuracy_trajectories/")])
+                traj_filename = f"trajectories/normal_accuracy_trajectories/traj{num_traj_files}"
                 
                 with open(traj_filename,  "a") as traj_file:
                     traj_file.write(f"{batch_accuracy} {running_accuracy}")

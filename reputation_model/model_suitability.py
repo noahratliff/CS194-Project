@@ -64,3 +64,27 @@ class ModelSuitability:
             agent_suitabilities[agent_name] = suitability
 
         return agent_suitabilities
+
+
+class NaiveModelSuitability:
+    def __init__(self, agent_names):
+        self.agent_names = agent_names
+        self.successes = {a: [] for a in agent_names}
+        self.accuracy_tracking = {a: [0, 0] for a in agent_names}       
+
+    def update(self, question, successes):
+        for agent_name in successes:
+            success = successes[agent_name]
+            self.successes[agent_name].append(1 if success else 0)
+
+    def suitability_score(self, new_question):
+        agent_suitabilities = {}
+        for agent_name in self.agent_names:
+            successes = np.array(self.successes[agent_name])
+
+            # Ensure suitability is between 0 and 1
+            suitability = np.mean(successes)
+
+            agent_suitabilities[agent_name] = suitability
+
+        return agent_suitabilities

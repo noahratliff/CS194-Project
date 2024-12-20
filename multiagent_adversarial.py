@@ -65,9 +65,17 @@ class System:
         if not os.path.exists(self.results_file):
             pd.DataFrame(columns=columns).to_csv(self.results_file, index=False)
 
-    def save_results(self, question, correct_answer, initial_answers, final_answers):
-        # Load existing results
-        results_df = pd.read_csv(self.results_file)
+    def save_results(self, question, correct_answer, initial_answers, final_answers, reputation_scores, num_files, new_file=True):
+        print("EHLLLOOOOOOOOOOOOOOOOOOOOOOOOOO")
+        if not new_file:
+            # Load existing results
+            results_df = pd.read_csv(self.results_file)
+        else:
+            filename = self.results_file.replace(".csv", f"{num_files}.csv")
+            try:
+                results_df = pd.read_csv(filename)
+            except FileNotFoundError:
+                results_df = pd.DataFrame()
 
         # Prepare a new row for the current question
         row = {}
@@ -77,13 +85,22 @@ class System:
         for agent_name, final_answer in final_answers.items():
             row[f"{agent_name}_conversational_response"] = final_answer
 
+        for agent_name, reputation in reputation_scores.items():
+            row[f"{agent_name}_reputation_score"] = reputation
+
         # Add metadata columns
         row["question"] = question.replace("\n", " ")
         row["correct_answer"] = correct_answer
-
-        # Append the new row to the DataFrame and save it
         results_df = pd.concat([results_df, pd.DataFrame([row])], ignore_index=True)
-        results_df.to_csv(self.results_file, index=False)
+
+        if not new_file:
+            print("CONCATENATING RESULTS IN SELF.RESULTS_FILE")
+            # Append the new row to the DataFrame and save it
+            results_df.to_csv(self.results_file, index=False)
+        else:
+            # create new csv to save results in
+            print("SAVING RESULTS IN: ", filename)
+            results_df.to_csv(filename, index=False)
 
     def initialize_group_chat(self, use_reputation=False, reputation_method="cosine"):
         agent_model_types = [
@@ -153,7 +170,7 @@ class System:
                             }
                         ]
                     },
-                    # human_input_mode="NEVER",
+                    human_input_mode="NEVER",
                     silent=False,
                 )
 
@@ -177,11 +194,11 @@ class System:
         assert reputation_method in ["cosine", "accuracy", "baseline"]
         self.reputation_method = reputation_method
 
-        self.results_folder = "results"
-        self.results_file = os.path.join(self.results_folder, "evaluation_results_with_rep_00.csv")
+        self.results_folder = "statistics/adv_centroid"
+        self.results_file = os.path.join(self.results_folder, "evaluation_results.csv")
         self.initialize_results_csv()
 
-    def process_question(self, question, correct_answer):
+    def process_question(self, question, correct_answer, num_files):
         # reset group chat before every question
         self.group_chat.reset()
 
@@ -202,7 +219,7 @@ class System:
             initial_answer = agent.generate_reply(
                 messages=[{"content": initial_prompt, "role": "user"}]
             )
-            if initial_answer and initial_answer.isnumeric():
+            if initial_answer.isnumeric():
                 initial_answers[agent.name] = initial_answer
             else:
                 # if initial answer is in wrong format (ex: agent2: my answer is 1, just get final number)
@@ -241,7 +258,7 @@ class System:
 
         for agent in self.non_facilitator_agents:
             response = agent.generate_reply(self.group_chat.messages)
-            if response and response.isnumeric():
+            if response.isnumeric():
                 final_answers[agent.name] = response
             else:
                 match = re.findall(r'\d+', initial_answer)
@@ -284,8 +301,22 @@ class System:
             question, successes=initial_successes
         )  # TODO: reputation based on answer before or after discussion?
 
+        # # write results for each question to save_progress_multiagent_system.csv
+        # save_line = {
+        #     "question": question,
+        #     "final_answer": final_answer,
+        #     "correct_answer": correct_answer,
+        #     "is_correct": is_correct,
+        # }
+        # # for agent, initial in initial_answers.values():
+        # #     save_line[f"{agent}_initial_answer"] = initial
+        # # for agent, final in final_answers.values():
+        # #     save_line[f"{agent}_final_answer"] = final
+
+        # with open('result/save_progress_multiagent_system.csv', mode='w', newline='') as file:
+
         self.save_results(
-            question, correct_answer, initial_answers, final_answers
+            question, correct_answer, initial_answers, final_answers, agent_reputations, num_files
         )
 
         return is_correct
@@ -309,14 +340,11 @@ class System:
             print(f"Processing question {idx+1}/{sample_size}...")
             # print(question)
 
-            try:
-                is_correct = self.process_question(prompt, question["answer"])
+            is_correct = self.process_question(prompt, question["answer"], 0)
 
-                if is_correct:
-                    num_correct += 1
-                total += 1
-            except:
-                continue
+            if is_correct:
+                num_correct += 1
+            total += 1
 
             # gpt4_answer = query_gpt4(prompt)
 
@@ -363,7 +391,7 @@ class System:
             print(f"Processing question {idx+1}/{sample_size}...")
             # print(question)
 
-            is_correct = self.process_question(question, qa["answer"])
+            is_correct = self.process_question(question, qa["answer"], 0)
 
             if is_correct:
                 num_correct += 1
@@ -387,9 +415,10 @@ class System:
 
 
     def full_eval_mmlu_mixed(self, subjects=["college_mathematics", "abstract_algebra", "college_physics"], batch_size = 16, max_iters = None):
-        num_correct = 0
-        total = 0
-
+        all_num_correct = 0
+        all_total = 0
+        num_result_files = len([f for f in os.listdir(self.results_folder) if os.path.isfile(os.path.join(self.results_folder, f))])
+        
         # Load the MMLU dataset
         dataset_list = []
         for subject in subjects:
@@ -404,12 +433,14 @@ class System:
         # concat_datasets = torch.utils.data.ConcatDataset(dataset_list)        
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
 
-        accuracies = []
+        batch_accuracies = []
+        running_accuracies = []
         num_epochs = 3
         for epoch in range(num_epochs):
+            dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
             for batch_i, batch in enumerate(tqdm(dataloader, desc="Evaluating")):
-                num_correct = 0
-                total = 0
+                batch_num_correct = 0
+                batch_total = 0
                 
                 if max_iters is not None and batch_i >= max_iters:
                     break
@@ -422,22 +453,33 @@ class System:
                     print(f"Processing question {idx+1}/{len(batch)}...")
                     # print(question)
 
-                    try:
-                        is_correct = self.process_question(question, qa["answer"])
+                    # try:
+                    is_correct = self.process_question(question, qa["answer"], num_result_files)
 
-                        if is_correct:
-                            num_correct += 1
-                        total += 1
-                    except:
-                        continue
+                    if is_correct:
+                        batch_num_correct += 1
+                        all_num_correct += 1
+                    batch_total += 1
+                    all_total += 1
+                    # except:
+                    #     continue
 
                 # Calculate accuracy
-                accuracy = (num_correct / total) * 100
-                print(f"Batch {batch_i}, Accuracy: {accuracy:.2f}%")
-                accuracies.append(accuracy)
+                batch_accuracy = (batch_num_correct / batch_total) * 100
+                print(f"Batch {batch_i}, Accuracy: {batch_accuracy:.2f}%")
+                batch_accuracies.append(batch_accuracy)
+                
+                running_accuracy = (all_num_correct / all_total) * 100
+                running_accuracies.append(running_accuracy)
+                
+                num_traj_files = len([f for f in os.listdir("trajectories/adv_centroid_trajectories/")])
+                traj_filename = f"trajectories/adv_centroid_trajectories/traj{num_traj_files}"
+                
+                with open(traj_filename,  "a") as traj_file:
+                    traj_file.write(f"{batch_accuracy} {running_accuracy}")
             
             plt.figure(figsize=(8, 5))
-            plt.plot(accuracies, marker='o')
+            plt.plot(batch_accuracies, marker='o')
             plt.xlabel('Batch number')
             plt.ylabel('Accuracy (%)')
             plt.title('Evaluation Accuracy, Subjects = {subjects}')
@@ -449,7 +491,104 @@ class System:
 
             plt.show()
 
-        return accuracies
+        return batch_accuracies
+
+    # def evaluate_system(self):
+
+    #     if is_correct:
+    #         correct += 1
+    #     total_questions += 1
+    #     # update reputation scores
+
+    #     questions = [
+    #         {"question": "What is the capital of France?", "answer": "Paris"},
+    #         {"question": "What is 2 + 2?", "answer": "4"},
+    #         {"question": "Who wrote 'Hamlet'?", "answer": "William Shakespeare"},
+    #     ]
+
+    #     reputation_scores = []
+
+    #     for qa in questions:
+    #         question = qa["question"]
+    #         correct_answer = qa["answer"].lower()
+    #         print(f"\nQuestion: {question}")
+    #         chat_manager.run_chat(
+    #             messages=[{"role": "user", "content": question}],
+    #             config=group_chat,
+    #             sender=agents[0],
+    #         )
+
+    #         # Get the final answer from the agents
+
+    #         final_answers = {}
+    #         for message in group_chat.messages[-num_agents:]:
+    #             name = message["name"]
+    #             final_answers[name] = message["content"].strip().lower()
+    #             print(f"{name}'s final answer: {final_answers[name]}")
+
+    #         vote_values = list(final_answers.values())
+    #         final_answer = max(set(vote_values), key=vote_values.count)
+
+    #         is_correct = final_answer == correct_answer
+    #         print(
+    #             f"The group's final answer was {'correct' if is_correct else 'incorrect'}"
+    #         )
+
+    #         for agent in agents:
+    #             if agent.name == "Facilitator":
+    #                 continue
+    #             is_correct = final_answers[agent.name] == correct_answer
+    #             print(
+    #                 f"{agent.name}'s final answer was {'correct' if is_correct else 'incorrect'}"
+    #             )
+
+    # TODO: Update reputation scores
+
+    # # Each agent gives their final answer
+    # final_answers = {}
+    # for agent in agents:
+    #     name = agent.name
+    #     reputation_context = (
+    #         get_reputation_context(name, reputation_scores)
+    #         if use_reputation
+    #         else ""
+    #     )
+    #     agent_message = f"{reputation_context}\n\nPlease provide your final answer to the question."
+    #     response = agent.generate_reply(
+    #         messages=[{"role": "user", "content": agent_message}]
+    #     )
+    #     print(response)
+    # final_answers[name] = response.content.strip()
+    # print(f"{name}'s final answer: {final_answers[name]}")
+    # time.sleep(1)
+
+    #     # Agents vote on the final answer (collectively determine the most common final answer)
+    #     vote_values = list(final_answers.values())
+    #     final_answer = max(set(vote_values), key=vote_values.count)
+    #     print(f"\nFinal answer after voting: {final_answer}")
+
+    #     # Check if each agent's final answer was correct
+    #     for name in agent_names:
+    #         is_correct = final_answers[name].lower() == correct_answer.lower()
+    #         reputation = update_reputation(
+    #             name, question, is_correct, reputation_scores
+    #         )
+    #         print(
+    #             f"{name}'s final answer was {'correct' if is_correct else 'incorrect'}. Updated reputation: {reputation}"
+    #         )
+
+    #     # Pass the correct answer to agents (for future context)
+    #     for name, agent in agents.items():
+    #         agent.receive_message(
+    #             sender="System",
+    #             message=f"The correct answer was: {correct_answer}",
+    #             silent=True,
+    #         )
+
+    # print("\nFinal reputation scores:")
+    # for name, score in reputation_scores.items():
+    #     print(f"{name}: {score}")
+
 
 if __name__ == "__main__":
 
@@ -457,4 +596,35 @@ if __name__ == "__main__":
     system.initialize_group_chat()
     # system.evaluate_gpt4_on_mmlu(sample_size=5)
     # system.evaluate_gpt4_on_mmlu_mixed(sample_size=4)
-    system.full_eval_mmlu_mixed(batch_size = 30, max_iters = 5)
+    system.full_eval_mmlu_mixed(batch_size = 20, max_iters = 5)
+
+    # TODO: try using these as agents, since they have different expertise levels now
+    # agents = [
+    #     ConversableAgent(
+    #         name=f"gpt-4",
+    #         system_message='''You are a collaborative agent that will engage in constructive discussions to come to a collective answer.
+    #                         You will be given information about how other agents performed on each question,
+    #                         which you should use to decide how much to trust their information.''',
+    #         llm_config={"config_list": [{"model": "gpt-4", "api_key": os.environ["OPENAI_API_KEY"]}]},
+    #         # human_input_mode="NEVER",
+    #         silent = False
+    #     ),
+    #     ConversableAgent(
+    #         name=f"gpt-4o-mini",
+    #         system_message='''You are a collaborative agent that will engage in constructive discussions to come to a collective answer.
+    #                         You will be given information about how other agents performed on each question,
+    #                         which you should use to decide how much to trust their information.''',
+    #         llm_config={"config_list": [{"model": "gpt-4o-mini", "api_key": os.environ["OPENAI_API_KEY"]}]},
+    #         # human_input_mode="NEVER",
+    #         silent = False
+    #     ),
+    #     ConversableAgent(
+    #         name=f"gpt-3",
+    #         system_message='''You are a collaborative agent that will engage in constructive discussions to come to a collective answer.
+    #                         You will be given information about how other agents performed on each question,
+    #                         which you should use to decide how much to trust their information.''',
+    #         llm_config={"config_list": [{"model": "gpt-3.5-turbo", "api_key": os.environ["OPENAI_API_KEY"]}]},
+    #         # human_input_mode="NEVER",
+    #         silent = False
+    #     )
+    # ]
